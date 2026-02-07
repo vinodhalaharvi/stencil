@@ -1,4 +1,4 @@
-.PHONY: all build test lint clean install run-parse run-inspect
+.PHONY: all build test lint clean install run-parse run-inspect sync
 
 MODULE  := github.com/vinodhalaharvi/stencil
 BINARY  := stencil
@@ -50,6 +50,13 @@ run-inspect: build
 ## version: show version
 version: build
 	./$(BINARY) version
+
+## sync: sync files to local project (preserves .git)
+sync:
+	@if [ -z "$(DEST)" ]; then echo "Usage: make sync DEST=/path/to/stencil"; exit 1; fi
+	@echo "Syncing to $(DEST) (preserving .git)..."
+	rsync -av --exclude='.git' --exclude='stencil' . $(DEST)/
+	@echo "Done. Run 'cd $(DEST) && git status' to see changes."
 
 ## help: show targets
 help:
