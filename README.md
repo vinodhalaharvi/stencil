@@ -85,6 +85,9 @@ stencil/
 ├── matcher/
 │   ├── matcher.go              # Go AST pattern matcher
 │   └── matcher_test.go         # Matcher tests
+├── executor/
+│   ├── executor.go             # Action executor (patch/insert/emit)
+│   └── executor_test.go        # Executor tests
 ├── examples/
 │   ├── enforce-ctx-timeout.lift
 │   └── entity-service.lift
@@ -99,8 +102,8 @@ stencil/
 
 - [x] Phase 1: `.lift` grammar + Participle parser
 - [x] Phase 2: Go AST matcher (walk `go/ast`, match patterns, return bindings)
-- [ ] Phase 3: Action executor (patch/delete/insert/emit using bindings)
-- [ ] Phase 4: CLI `stencil apply` command
+- [x] Phase 3: Action executor (patch/insert/emit using bindings)
+- [x] Phase 4: CLI `stencil apply` command
 - [ ] Phase 5: LSP server for `.lift` files
 
 ## License

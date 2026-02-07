@@ -13,11 +13,12 @@ import (
 	"go/ast"
 	"os"
 
+	"github.com/vinodhalaharvi/stencil/executor"
 	"github.com/vinodhalaharvi/stencil/grammar"
 	"github.com/vinodhalaharvi/stencil/matcher"
 )
 
-const version = "0.2.0"
+const version = "0.3.0"
 
 func main() {
 	if len(os.Args) < 2 {
@@ -32,6 +33,8 @@ func main() {
 		cmdInspect(os.Args[2:])
 	case "match":
 		cmdMatch(os.Args[2:])
+	case "apply":
+		cmdApply(os.Args[2:])
 	case "version":
 		fmt.Printf("stencil v%s\n", version)
 	case "help", "--help", "-h":
@@ -50,13 +53,15 @@ Usage:
   stencil parse   <file.lift>                     Validate a .lift file
   stencil inspect <file.lift>                     Parse and display structure
   stencil match   <file.lift> --source <file.go>  Find matches in Go source
+  stencil apply   <file.lift> --source <file.go>  Apply transformations
   stencil version                                 Show version
   stencil help                                    Show this message
 
 Examples:
   stencil parse examples/entity-service.lift
   stencil inspect examples/enforce-ctx-timeout.lift
-  stencil match examples/enforce-ctx-timeout.lift --source testdata/bad_http_client.go`)
+  stencil match examples/enforce-ctx-timeout.lift --source testdata/bad_http_client.go
+  stencil apply examples/enforce-ctx-timeout.lift --source testdata/bad_http_client.go`)
 }
 
 func cmdParse(args []string) {
@@ -233,5 +238,140 @@ func formatBinding(v any) string {
 		return fmt.Sprintf("<FieldList(%d)>", len(val.List))
 	default:
 		return fmt.Sprintf("<%T>", v)
+	}
+}
+
+// cmdApply applies transformations from a .lift file to Go source.
+func cmdApply(args []string) {
+	if len(args) < 3 {
+		fmt.Fprintln(os.Stderr, "error: apply requires <file.lift> --source <file.go>")
+		os.Exit(1)
+	}
+
+	liftPath := args[0]
+	var sourcePath string
+	var outputPath string
+	writeInPlace := false
+
+	// Parse flags
+	for i := 1; i < len(args); i++ {
+		switch args[i] {
+		case "--source":
+			if i+1 < len(args) {
+				sourcePath = args[i+1]
+				i++
+			}
+		case "--output", "-o":
+			if i+1 < len(args) {
+				outputPath = args[i+1]
+				i++
+			}
+		case "--write", "-w":
+			writeInPlace = true
+		}
+	}
+
+	if sourcePath == "" {
+		fmt.Fprintln(os.Stderr, "error: --source flag required")
+		os.Exit(1)
+	}
+
+	// Parse .lift file
+	parser, err := grammar.NewParser()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: failed to build parser: %v\n", err)
+		os.Exit(1)
+	}
+
+	liftData, err := os.ReadFile(liftPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		os.Exit(1)
+	}
+
+	prog, err := parser.ParseString(liftPath, string(liftData))
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "✗ %s\n  %v\n", liftPath, err)
+		os.Exit(1)
+	}
+
+	// Create matcher from Go source
+	m, err := matcher.NewFromFile(sourcePath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Create executor sharing the same AST
+	exec := executor.NewFromMatcher(m)
+
+	// Process each lift block
+	var lastResult *executor.Result
+	totalMatches := 0
+
+	for _, block := range prog.Blocks {
+		matches, err := m.MatchBlock(block)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error matching block %s: %v\n", block.Name, err)
+			continue
+		}
+
+		// Apply where filters
+		matches = matcher.FilterMatches(matches, block.Where)
+
+		if len(matches) == 0 {
+			continue
+		}
+
+		fmt.Printf("Block %s: applying to %d match(es)\n", block.Name, len(matches))
+		totalMatches += len(matches)
+
+		// Execute actions
+		result, err := exec.Execute(block, matches)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error executing block %s: %v\n", block.Name, err)
+			continue
+		}
+		lastResult = result
+
+		// Report applied actions
+		for _, action := range result.Applied {
+			fmt.Printf("  ✓ %s\n", action)
+		}
+
+		// Write emitted files
+		for filename, content := range result.EmittedFiles {
+			if err := os.WriteFile(filename, []byte(content), 0644); err != nil {
+				fmt.Fprintf(os.Stderr, "error writing %s: %v\n", filename, err)
+			} else {
+				fmt.Printf("  → wrote %s\n", filename)
+			}
+		}
+	}
+
+	if totalMatches == 0 {
+		fmt.Println("No matches found.")
+		return
+	}
+
+	// Handle output
+	if lastResult != nil && lastResult.ModifiedSource != "" {
+		if writeInPlace {
+			if err := os.WriteFile(sourcePath, []byte(lastResult.ModifiedSource), 0644); err != nil {
+				fmt.Fprintf(os.Stderr, "error writing %s: %v\n", sourcePath, err)
+				os.Exit(1)
+			}
+			fmt.Printf("\n→ wrote %s\n", sourcePath)
+		} else if outputPath != "" {
+			if err := os.WriteFile(outputPath, []byte(lastResult.ModifiedSource), 0644); err != nil {
+				fmt.Fprintf(os.Stderr, "error writing %s: %v\n", outputPath, err)
+				os.Exit(1)
+			}
+			fmt.Printf("\n→ wrote %s\n", outputPath)
+		} else {
+			// Print to stdout
+			fmt.Println("\n--- Modified source ---")
+			fmt.Println(lastResult.ModifiedSource)
+		}
 	}
 }
