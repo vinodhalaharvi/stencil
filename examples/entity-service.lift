@@ -1,0 +1,116 @@
+// entity-service.lift
+//
+// Takes any exported struct with methods and generates:
+//   1. A Go interface (AST-mode, type-safe)
+//   2. A protobuf definition (template-mode)
+//   3. A repository with CRUD operations (code-mode)
+
+lift "entity-interface" {
+
+    from go {
+        match TypeSpec {
+            name: $Name
+            type: StructType {
+                fields: $Fields...
+            }
+        }
+
+        match FuncDecl {
+            recv: StarExpr { x: $Name }
+            name: $MethodName
+            type: $MethodType
+        }
+    }
+
+    where {
+        $Name.exported
+        len($Methods) > 0
+    }
+
+    emit go {
+        file "service.go"
+        package main
+
+        ast {
+            GenDecl {
+                tok: "TYPE"
+                specs: TypeSpec {
+                    name: "${Name}Service"
+                    type: InterfaceType {
+                        methods: for $m in $Methods {
+                            Field {
+                                names: [$m.Name]
+                                type: $m.MethodType
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+lift "entity-proto" {
+
+    from go {
+        match TypeSpec {
+            name: $Name
+            type: StructType {
+                fields: $Fields...
+            }
+        }
+    }
+
+    where {
+        $Name.exported
+    }
+
+    emit proto {
+        file "model.proto"
+
+        template {`syntax = "proto3";
+
+package models;
+
+message ${Name} {
+    ${Fields | proto_fields}
+}`}
+    }
+}
+
+lift "entity-repo" {
+
+    from go {
+        match TypeSpec {
+            name: $Name
+            type: StructType {
+                fields: $Fields...
+            }
+        }
+    }
+
+    where {
+        $Name.exported
+    }
+
+    emit go {
+        file "repo.go"
+        package main
+
+        code {`type ${Name}Repository struct {
+    db *sql.DB
+}
+
+func New${Name}Repository(db *sql.DB) *${Name}Repository {
+    return &${Name}Repository{db: db}
+}
+
+func (r *${Name}Repository) GetByID(ctx context.Context, id int64) (*${Name}, error) {
+    ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+    defer cancel()
+    row := r.db.QueryRowContext(ctx, "SELECT * FROM ${Name | snake_case} WHERE id = $1", id)
+    var entity ${Name}
+    return &entity, row.Scan(&entity)
+}`}
+    }
+}

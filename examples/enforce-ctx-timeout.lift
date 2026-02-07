@@ -1,0 +1,53 @@
+// enforce-ctx-timeout.lift
+//
+// Find functions that make HTTP calls without context.WithTimeout
+// and patch them to add timeout enforcement.
+
+lift "enforce-ctx-timeout" {
+
+    from go {
+        match FuncDecl {
+            name: $FuncName
+            type: FuncType {
+                params: $Params...
+                results: $Results...
+            }
+            body: $Body
+        }
+
+        match CallExpr in $Body {
+            fun: SelectorExpr {
+                sel: $CallName
+            }
+            args: $CallArgs...
+        }
+    }
+
+    where {
+        $CallName in ["Get", "Post", "Do", "Dial", "DialContext", "RoundTrip", "NewRequest"]
+
+        not contains($Body, CallExpr {
+            fun: SelectorExpr {
+                x: Ident { name: "context" }
+                sel: Ident { name: "WithTimeout" }
+            }
+        })
+    }
+
+    patch {
+        if not contains($Params, Field {
+            type: SelectorExpr {
+                x: Ident { name: "context" }
+                sel: Ident { name: "Context" }
+            }
+        }) {
+            set $Params.first = "ctx context.Context"
+        }
+    }
+
+    insert code {
+        prepend $Body
+        `ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+        defer cancel()`
+    }
+}
