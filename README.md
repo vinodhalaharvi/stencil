@@ -13,11 +13,11 @@ Tools like semgrep and ast-grep use YAML for configuration. YAML breaks down whe
 ```bash
 make build
 ./stencil parse examples/entity-service.lift
-./stencil inspect examples/enforce-ctx-timeout.lift
+./stencil match examples/enforce-ctx-timeout.lift --source testdata/bad_http_client.go
 make test
 ```
 
-## Example: Enforce Context Timeout
+## Example: Find Functions Missing Context Timeout
 
 ```
 lift "enforce-ctx-timeout" {
@@ -51,6 +51,28 @@ lift "enforce-ctx-timeout" {
 }
 ```
 
+Run matching:
+
+```bash
+$ ./stencil match examples/enforce-ctx-timeout.lift --source testdata/bad_http_client.go
+
+Block "enforce-ctx-timeout": 4 match(es)
+  [1] testdata/bad_http_client.go:17
+      $FuncName = GetUser
+      $CallName = Get
+  [2] testdata/bad_http_client.go:32
+      $FuncName = CreateUser
+      $CallName = Post
+  [3] testdata/bad_http_client.go:46
+      $FuncName = FetchAll
+      $CallName = Get
+  [4] testdata/bad_http_client.go:58
+      $FuncName = DialBackend
+      $CallName = Dial
+
+Total: 4 match(es)
+```
+
 ## Project Structure
 
 ```
@@ -60,9 +82,15 @@ stencil/
 │   ├── grammar.go              # Participle AST types
 │   ├── grammar_test.go         # Unit tests
 │   └── examples_test.go        # Integration tests
+├── matcher/
+│   ├── matcher.go              # Go AST pattern matcher
+│   └── matcher_test.go         # Matcher tests
 ├── examples/
 │   ├── enforce-ctx-timeout.lift
 │   └── entity-service.lift
+├── testdata/
+│   ├── bad_http_client.go      # Example: missing timeouts
+│   └── good_http_client.go     # Example: proper timeouts
 ├── Makefile
 └── README.md
 ```
@@ -70,9 +98,9 @@ stencil/
 ## Roadmap
 
 - [x] Phase 1: `.lift` grammar + Participle parser
-- [ ] Phase 2: Go AST matcher
-- [ ] Phase 3: Action executor
-- [ ] Phase 4: CLI `stencil apply`
+- [x] Phase 2: Go AST matcher (walk `go/ast`, match patterns, return bindings)
+- [ ] Phase 3: Action executor (patch/delete/insert/emit using bindings)
+- [ ] Phase 4: CLI `stencil apply` command
 - [ ] Phase 5: LSP server for `.lift` files
 
 ## License

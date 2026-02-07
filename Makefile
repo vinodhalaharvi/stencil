@@ -1,8 +1,8 @@
-.PHONY: all build test lint clean install run-parse run-inspect sync
+.PHONY: all build test lint clean install run-parse run-inspect run-match sync
 
 MODULE  := github.com/vinodhalaharvi/stencil
 BINARY  := stencil
-VERSION := 0.1.0
+VERSION := 0.2.0
 
 GO      := go
 GOFLAGS := -v
@@ -46,6 +46,10 @@ run-parse: build
 ## run-inspect: inspect an example
 run-inspect: build
 	./$(BINARY) inspect examples/enforce-ctx-timeout.lift
+
+## run-match: run matching against testdata
+run-match: build
+	./$(BINARY) match examples/enforce-ctx-timeout.lift --source testdata/bad_http_client.go
 
 ## version: show version
 version: build

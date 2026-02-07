@@ -10,12 +10,14 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"go/ast"
 	"os"
 
 	"github.com/vinodhalaharvi/stencil/grammar"
+	"github.com/vinodhalaharvi/stencil/matcher"
 )
 
-const version = "0.1.0"
+const version = "0.2.0"
 
 func main() {
 	if len(os.Args) < 2 {
@@ -28,6 +30,8 @@ func main() {
 		cmdParse(os.Args[2:])
 	case "inspect":
 		cmdInspect(os.Args[2:])
+	case "match":
+		cmdMatch(os.Args[2:])
 	case "version":
 		fmt.Printf("stencil v%s\n", version)
 	case "help", "--help", "-h":
@@ -43,14 +47,16 @@ func printUsage() {
 	fmt.Println(`stencil — structural code matching and generation for Go
 
 Usage:
-  stencil parse   <file.lift>    Validate a .lift file
-  stencil inspect <file.lift>    Parse and display structure
-  stencil version                Show version
-  stencil help                   Show this message
+  stencil parse   <file.lift>                     Validate a .lift file
+  stencil inspect <file.lift>                     Parse and display structure
+  stencil match   <file.lift> --source <file.go>  Find matches in Go source
+  stencil version                                 Show version
+  stencil help                                    Show this message
 
 Examples:
   stencil parse examples/entity-service.lift
-  stencil inspect examples/enforce-ctx-timeout.lift`)
+  stencil inspect examples/enforce-ctx-timeout.lift
+  stencil match examples/enforce-ctx-timeout.lift --source testdata/bad_http_client.go`)
 }
 
 func cmdParse(args []string) {
@@ -117,4 +123,115 @@ func cmdInspect(args []string) {
 
 	out, _ := json.MarshalIndent(prog, "", "  ")
 	fmt.Println(string(out))
+}
+
+// cmdMatch runs pattern matching against Go source files.
+func cmdMatch(args []string) {
+	if len(args) < 3 {
+		fmt.Fprintln(os.Stderr, "error: match requires <file.lift> --source <file.go>")
+		os.Exit(1)
+	}
+
+	liftPath := args[0]
+	var sourcePath string
+
+	// Parse --source flag
+	for i := 1; i < len(args); i++ {
+		if args[i] == "--source" && i+1 < len(args) {
+			sourcePath = args[i+1]
+			break
+		}
+	}
+
+	if sourcePath == "" {
+		fmt.Fprintln(os.Stderr, "error: --source flag required")
+		os.Exit(1)
+	}
+
+	// Parse .lift file
+	parser, err := grammar.NewParser()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: failed to build parser: %v\n", err)
+		os.Exit(1)
+	}
+
+	liftData, err := os.ReadFile(liftPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		os.Exit(1)
+	}
+
+	prog, err := parser.ParseString(liftPath, string(liftData))
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "✗ %s\n  %v\n", liftPath, err)
+		os.Exit(1)
+	}
+
+	// Create matcher from Go source
+	m, err := matcher.NewFromFile(sourcePath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Run matching for each lift block
+	totalMatches := 0
+	for _, block := range prog.Blocks {
+		matches, err := m.MatchBlock(block)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error matching block %s: %v\n", block.Name, err)
+			continue
+		}
+
+		// Apply where filters
+		matches = matcher.FilterMatches(matches, block.Where)
+
+		if len(matches) == 0 {
+			continue
+		}
+
+		fmt.Printf("Block %s: %d match(es)\n", block.Name, len(matches))
+		for i, match := range matches {
+			pos := m.FileSet().Position(match.Node.Pos())
+			fmt.Printf("  [%d] %s:%d\n", i+1, pos.Filename, pos.Line)
+
+			// Print key bindings
+			for name, val := range match.Bindings {
+				valStr := formatBinding(val)
+				if valStr != "" {
+					fmt.Printf("      $%s = %s\n", name, valStr)
+				}
+			}
+		}
+		totalMatches += len(matches)
+	}
+
+	if totalMatches == 0 {
+		fmt.Println("No matches found.")
+	} else {
+		fmt.Printf("\nTotal: %d match(es)\n", totalMatches)
+	}
+}
+
+// formatBinding formats a binding value for display.
+func formatBinding(v any) string {
+	if v == nil {
+		return "<nil>"
+	}
+
+	switch val := v.(type) {
+	case *ast.Ident:
+		return val.Name
+	case *ast.FuncType:
+		return "<FuncType>"
+	case *ast.BlockStmt:
+		return "<BlockStmt>"
+	case *ast.FieldList:
+		if val == nil || val.List == nil {
+			return "<FieldList(0)>"
+		}
+		return fmt.Sprintf("<FieldList(%d)>", len(val.List))
+	default:
+		return fmt.Sprintf("<%T>", v)
+	}
 }
